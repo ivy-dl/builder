@@ -8,8 +8,6 @@ import ivy_tests.helpers as helpers
 # local
 from ivy_builder.dataset import MapDataset
 
-# ToDo: find way to get multiprocessing working properly for jax and mxnet
-
 
 class TestQueries:
 
@@ -27,7 +25,7 @@ class TestQueries:
         "num_processes", [1, 2])
     def test_single(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -50,7 +48,7 @@ class TestQueries:
         "num_processes", [1, 2])
     def test_single_wrapped(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -75,7 +73,7 @@ class TestQueries:
         "num_processes", [1, 2])
     def test_slice(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -101,7 +99,7 @@ class TestQueries:
         "num_processes", [1, 2])
     def test_slice_wrapped(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -141,7 +139,7 @@ class TestBatch:
         "num_processes", [1, 2])
     def test_single(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -162,7 +160,7 @@ class TestBatch:
         "num_processes", [1, 2])
     def test_single_wrapped(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -184,7 +182,7 @@ class TestBatch:
         "num_processes", [1, 2])
     def test_slice(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -207,7 +205,7 @@ class TestBatch:
         "num_processes", [1, 2])
     def test_slice_wrapped(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -243,7 +241,7 @@ class TestUnbatch:
         "num_processes", [1, 2])
     def test_single(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -263,7 +261,7 @@ class TestUnbatch:
         "num_processes", [1, 2])
     def test_single_wrapped(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -282,7 +280,7 @@ class TestUnbatch:
         "num_processes", [1, 2])
     def test_slice(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -302,7 +300,7 @@ class TestUnbatch:
         "num_processes", [1, 2])
     def test_slice_wrapped(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(array_shape, num_processes)
@@ -331,7 +329,7 @@ class TestUnbatchAndBatch:
         "num_processes", [1, 2])
     def test_single(self, dev_str, f, call, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(num_processes)
@@ -349,7 +347,7 @@ class TestUnbatchAndBatch:
         "num_processes", [1, 2])
     def test_single_wrapped(self, dev_str, f, call, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(num_processes)
@@ -376,7 +374,7 @@ class TestUnbatchAndBatch:
         "num_processes", [1, 2])
     def test_slice(self, dev_str, f, call, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(num_processes)
@@ -393,7 +391,7 @@ class TestUnbatchAndBatch:
         "num_processes", [1, 2])
     def test_slice_wrapped(self, dev_str, f, call, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         self._init(num_processes)
@@ -425,7 +423,7 @@ class TestShuffle:
         "num_processes", [1, 2])
     def test_single(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         ivy.seed(0)
@@ -458,7 +456,7 @@ class TestShuffle:
         "num_processes", [1, 2])
     def test_single_wrapped(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         ivy.seed(0)
@@ -487,7 +485,7 @@ class TestShuffle:
         "num_processes", [1, 2])
     def test_slice(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         ivy.seed(0)
@@ -518,7 +516,7 @@ class TestShuffle:
         "num_processes", [1, 2])
     def test_slice_wrapped(self, dev_str, f, call, array_shape, num_processes):
 
-        if call in [helpers.jnp_call, helpers.mx_call] and num_processes == 2:
+        if call is helpers.mx_call:
             pytest.skip()
 
         ivy.seed(0)
@@ -546,17 +544,17 @@ class TestShuffle:
         del self._dataset
 
 
-class TestPrefetch:
+class TestIteratorPrefetch:
 
     def _init(self, array_shape, parallel_method):
         x = [ivy.array(0), ivy.array(1), ivy.array(2), ivy.array(3), ivy.array(4),
              ivy.array(5), ivy.array(6), ivy.array(7), ivy.array(8), ivy.array(9)]
         self._x = [ivy.reshape(item, array_shape) for item in x]
         dataset_container = ivy.Container({'x': self._x})
-        dataset = MapDataset(dataset_container, 'base', dataset_container.shape[0], with_caching=False, cache_size=0)
+        dataset = MapDataset(dataset_container, 'base', dataset_container.shape[0], cache_size=0)
 
         def sleep_fn(cont, ivyh=None):
-            time.sleep(0.05)
+            time.sleep(0.2)
             return cont
 
         self._dataset_wo_prefetch = dataset.map('sleep', sleep_fn)
@@ -570,27 +568,79 @@ class TestPrefetch:
     def test_single(self, dev_str, f, call, array_shape, parallel_method):
 
         if call is helpers.mx_call:
-            # For some reason, mxnet causes this to hang. Further, array_shape == [] and parallel_method == 'process'
-            # causes ret = self._output_queue.get(timeout=self._prefetch_timeout) in method _get_from_process in
-            # IteratorDataset class to hang, and then timeout with queue.Emppty exception.
             pytest.skip()
 
         self._init(array_shape, parallel_method)
 
-        for i in range(10):
+        for i in range(5):
             start_time = time.perf_counter()
             self._dataset_wo_prefetch[i]
-            assert time.perf_counter() - start_time > 0.05
+            assert time.perf_counter() - start_time > 0.2
 
-        for i in range(10):
+        for i in range(5):
             start_time = time.perf_counter()
             next(self._dataset_w_prefetch)
             if i > 0:
-                assert time.perf_counter() - start_time < 0.05
-            time.sleep(0.05)
+                assert time.perf_counter() - start_time < 0.2
+            time.sleep(0.3)
 
         # delete
-        self._dataset_wo_prefetch.__del__()
+        self._dataset_wo_prefetch.close()
         del self._dataset_wo_prefetch
-        self._dataset_w_prefetch.__del__()
+        self._dataset_w_prefetch.close()
+        del self._dataset_w_prefetch
+
+
+class TestMapPrefetch:
+
+    def _init(self, array_shape, num_processes):
+        x = [ivy.array(0), ivy.array(1), ivy.array(2), ivy.array(3), ivy.array(4),
+             ivy.array(5), ivy.array(6), ivy.array(7), ivy.array(8), ivy.array(9)]
+        self._x = [ivy.reshape(item, array_shape) for item in x]
+
+        dataset_container = ivy.Container({'x': self._x})
+        dataset = MapDataset(dataset_container, 'base', dataset_container.shape[0], cache_size=0,
+                                         num_processes=num_processes)
+
+        def sleep_fn(cont, _):
+            time.sleep(0.2)
+            return cont
+
+        self._dataset_wo_prefetch = dataset.map('sleep', sleep_fn)
+        self._dataset_w_prefetch = self._dataset_wo_prefetch.prefetch('prefetch', 1)
+
+    # noinspection PyStatementEffect
+    @pytest.mark.parametrize(
+        "array_shape", [[1], []])
+    @pytest.mark.parametrize(
+        "num_processes", [1, 2])
+    def test_single(self, dev_str, f, call, array_shape, num_processes):
+
+        if call is helpers.mx_call:
+            # For some reason, mxnet does not work well with prefetching
+            pytest.skip()
+
+        self._init(array_shape, num_processes)
+
+        for i in range(5):
+            start_time = time.perf_counter()
+            assert self._dataset_wo_prefetch[i].x == i
+            assert self._dataset_wo_prefetch[i].x == i
+            time_taken = time.perf_counter() - start_time
+            assert time_taken > 0.2
+
+        for i in range(5):
+            start_time = time.perf_counter()
+            assert self._dataset_w_prefetch[i].x == i
+            assert self._dataset_w_prefetch[i].x == i
+            end_time = time.perf_counter()
+            time_taken = end_time - start_time
+            if i > 0:
+                assert time_taken < 0.2
+            time.sleep(0.3)
+
+        # delete
+        self._dataset_wo_prefetch.close()
+        del self._dataset_wo_prefetch
+        self._dataset_w_prefetch.close()
         del self._dataset_w_prefetch
