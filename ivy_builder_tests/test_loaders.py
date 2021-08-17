@@ -1,5 +1,10 @@
 # global
 import os
+import time
+
+import ivy
+from ivy_tests import helpers
+
 import pytest
 import numpy as np
 
@@ -18,6 +23,12 @@ from ivy_builder.data_loaders.specs.json_data_loader_spec import JSONDataLoaderS
     "prefetch_method", ['thread', 'process'])
 def test_json_loader_fixed_seq_len(dev_str, f, call, preload_containers, array_mode, prefetch_method):
 
+    if call not in [helpers.torch_call, helpers.tf_call]:
+        pytest.skip()
+
+    print('\n\nTEST {} {} {} {}'.format(ivy.current_framework_str(), preload_containers, array_mode, prefetch_method))
+    test_start_time = time.perf_counter()
+
     # seed
     f.seed(0)
     np.random.seed(0)
@@ -31,22 +42,31 @@ def test_json_loader_fixed_seq_len(dev_str, f, call, preload_containers, array_m
     data_loader_spec = JSONDataLoaderSpec(dataset_spec, batch_size=1, window_size=1, num_sequences_to_use=1,
                                           num_training_sequences=1, preload_containers=preload_containers,
                                           array_mode=array_mode, array_strs=['array'], float_strs=['depth'],
-                                          uint8_strs=['rgb'], prefetch_method=prefetch_method)
+                                          uint8_strs=['rgb'], prefetch_method=prefetch_method, shuffle_data=False)
 
     # data loader
+    a = time.perf_counter()
     data_loader = JSONDataLoader(data_loader_spec)
+    b = time.perf_counter()
+    print('initializing loader: {}'.format(b - a))
 
     # testing
     for i in range(2):
+        a = time.perf_counter()
         train_batch = data_loader.get_next_batch('training')
+        b = time.perf_counter()
+        print('getting batch: {}'.format(b - a))
         assert train_batch.actions.shape == (1, 1, 6)
         assert train_batch.observations.image.ego.ego_cam_px.rgb.shape == (1, 1, 32, 32, 3)
         assert train_batch.observations.image.ego.ego_cam_px.rgb.shape == (1, 1, 32, 32, 3)
         assert train_batch.array.data.shape == (1, 1, 3)
 
-    # delete
+    # close
+    a = time.perf_counter()
     data_loader.close()
-    del data_loader
+    b = time.perf_counter()
+    print('deleting data loader: {}'.format(b - a))
+    print('total time: {}'.format(time.perf_counter() - test_start_time))
 
 
 @pytest.mark.parametrize(
@@ -70,7 +90,8 @@ def test_json_loader(dev_str, f, call, preload_containers, array_mode, prefetch_
     data_loader_spec = JSONDataLoaderSpec(dataset_spec, batch_size=3, window_size=2, num_sequences_to_use=6,
                                           num_training_sequences=3, preload_containers=preload_containers,
                                           array_mode=array_mode, array_strs=['array'], float_strs=['depth'],
-                                          uint8_strs=['rgb'], num_to_prefetch=0, prefetch_method=prefetch_method)
+                                          uint8_strs=['rgb'], num_to_prefetch=0, prefetch_method=prefetch_method,
+                                          shuffle_data=False)
 
     # data loader
     data_loader = JSONDataLoader(data_loader_spec)
@@ -97,7 +118,7 @@ def test_json_loader(dev_str, f, call, preload_containers, array_mode, prefetch_
                                           array_mode=array_mode, shuffle_buffer_size=3, num_to_prefetch=0,
                                           unused_key_chains=['observations/image/ego/ego_cam_px/depth'],
                                           array_strs=['array'], float_strs=['depth'], uint8_strs=['rgb'],
-                                          prefetch_method=prefetch_method)
+                                          prefetch_method=prefetch_method, shuffle_data=False)
     data_loader = JSONDataLoader(data_loader_spec)
 
     train_batch = data_loader.get_next_batch('training')

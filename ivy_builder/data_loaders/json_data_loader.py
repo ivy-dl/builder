@@ -33,9 +33,6 @@ class JSONDataLoader(DataLoader):
         self._spec = data_loader_spec
         self._container_data_dir = os.path.join(self._spec.dataset_spec.dirs.dataset_dir, 'containers/')
 
-        # base cache size
-        self._base_cache_size = self._spec.cache_size * self._spec.batch_size * self._spec.window_size
-
         # variables
         self._window_size = self._spec.window_size
         if 'sequence_lengths' in self._spec.dataset_spec:
@@ -58,12 +55,21 @@ class JSONDataLoader(DataLoader):
         self._compute_num_workers()
 
         # train dataset
-        self._training_iterator = self._get_iterator_dataset(start_idx_train, end_idx_train)
+        self._training_dataset = self._get_map_dataset(start_idx_train, end_idx_train)
+        # ToDo: remove with_prefetching=... debug code below
+        self._training_iterator = self._training_dataset.to_iterator(
+            'to_iterator', with_prefetching=False, parallel_method=self._spec.prefetch_method,
+            to_gpu=self._spec.prefetch_to_gpu, ivyh=ivy)
 
         # validation
         if self._spec.num_training_sequences < self._spec.num_sequences_to_use:
-            self._validation_iterator = self._get_iterator_dataset(start_idx_valid, end_idx_valid)
+            self._validation_dataset = self._get_map_dataset(start_idx_valid, end_idx_valid)
+            # ToDo: remove with_prefetching=... debug code below
+            self._validation_iterator = self._validation_dataset.to_iterator(
+                'to_iterator', with_prefetching=False, parallel_method=self._spec.prefetch_method,
+                to_gpu=self._spec.prefetch_to_gpu, ivyh=ivy)
         else:
+            self._validation_dataset = None
             self._validation_iterator = None
 
         # dummy batch
@@ -359,7 +365,7 @@ class JSONDataLoader(DataLoader):
     # Dataset Creation #
     # -----------------#
 
-    def _get_iterator_dataset(self, starting_example, ending_example):
+    def _get_map_dataset(self, starting_example, ending_example):
 
         # container filepaths
         container_filepaths = self._load_container_filepaths_as_lists(self._container_data_dir, starting_example,
@@ -408,16 +414,14 @@ class JSONDataLoader(DataLoader):
                 base_cont.map(self._to_numpy),
                 'base',
                 container_slices.shape[0],
-                ivyh=ivy.get_framework('numpy'),
-                cache_size=self._base_cache_size)
+                ivyh=ivy.get_framework('numpy'))
         else:
             # load containers with filepath entries
             base_cont = ivy.Container({'fpaths': container_filepaths})
             dataset = MapDataset(base_cont.map(self._to_numpy),
                                  'base',
                                  len(container_filepaths),
-                                 ivyh=ivy.get_framework('numpy'),
-                                 cache_size=self._base_cache_size)
+                                 ivyh=ivy.get_framework('numpy'))
             dataset = dataset.map('to_numpy',
                                   lambda cont, ivyh: cont.map(lambda x_, kc: self._to_numpy(x_, ivyh)))
             dataset = dataset.map('loaded_json',
@@ -458,10 +462,7 @@ class JSONDataLoader(DataLoader):
                                   self._spec.post_proc_fn,
                                   self._num_workers.post_processed,
                                   ivyh=ivy)
-        return dataset.to_iterator('to_iterator',
-                                   parallel_method=self._spec.prefetch_method,
-                                   to_gpu=self._spec.prefetch_to_gpu,
-                                   ivyh=ivy)
+        return dataset
 
     # Public Methods #
     # ---------------#

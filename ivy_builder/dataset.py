@@ -12,27 +12,61 @@ import torch.multiprocessing as multiprocessing
 # noinspection PyMissingConstructor
 class Cache:
     
-    def __init__(self, max_size):
+    def __init__(self, max_size, list_in, dict_in, lock):
         self._max_size = max_size
-        self._used_keys = list()
-        self._dict = dict()
-        
+        self._used_keys = list_in
+        self._dict = dict_in
+        self._lock = lock
+
     def __setitem__(self, key, value):
-        if key in self:
+        self._lock.acquire()
+        if key in self._dict:
             self._used_keys.remove(key)
             self._used_keys.append(key)
+            self._lock.release()
             return
         self._used_keys.append(key)
         if len(self._used_keys) > self._max_size:
             key_to_del = self._used_keys.pop(0)
             del self._dict[key_to_del]
-        self._dict[key] = value
+        self._dict[key] = value.to_dict()
+        self._lock.release()
         
     def __getitem__(self, item):
-        return self._dict[item]
+        self._lock.acquire()
+        try:
+            ret = self._dict[item]
+        except KeyError as e:
+            self._lock.release()
+            raise e
+        self._lock.release()
+        return ivy.Container(ret)
 
     def __contains__(self, key):
-        return key in self._dict
+        self._lock.acquire()
+        ret = key in self._dict
+        self._lock.release()
+        return ret
+
+    def __repr__(self):
+        return str(self.to_dict())
+
+    def to_dict(self):
+        self._lock.acquire()
+        ret = dict(self._dict)
+        self._lock.release()
+        return ret
+
+    # Getters and Setters #
+    # --------------------#
+
+    @property
+    def max_size(self):
+        return self._max_size
+
+    @max_size.setter
+    def max_size(self, max_size):
+        self._max_size = max_size
 
 
 class IteratorDataset:
@@ -69,13 +103,13 @@ class IteratorDataset:
         self._with_prefetching = with_prefetching
         self._prefetch_timeout = prefetch_timeout
         self._parallel_method = parallel_method
+        self._prefetch_running = False
         if self._with_prefetching:
-            self._prefetch_running = False
             if self._parallel_method == 'process':
                 self._input_queue = multiprocessing.Queue()
                 self._output_queue = multiprocessing.Queue()
                 self._worker = multiprocessing.Process(
-                    target=self._process_worker_fn, args=(self._base_dataset_iterator, self._input_queue,
+                    target=self._process_worker_fn, args=(base_dataset, self._base_dataset_iterator, self._input_queue,
                                                           self._output_queue))
                 self._get_next = self._get_from_process
             elif self._parallel_method == 'thread':
@@ -93,15 +127,20 @@ class IteratorDataset:
     # --------#
 
     @staticmethod
-    def _process_worker_fn(base_dataset, input_queue, output_queue):
+    def _process_worker_fn(base_dataset, base_dataset_iterator, input_queue, output_queue):
         keep_going = True
         while keep_going:
             try:
-                keep_going = input_queue.get(timeout=5.0)
+                keep_going = input_queue.get(timeout=1.0)
             except queue.Empty:
                 continue
-            output_queue.put(next(base_dataset).to_dict())
+            output_queue.put(next(base_dataset_iterator).to_dict())
+        # with open("{}_{}.log".format(base_dataset.name, id(base_dataset)), "a+") as f:
+        #     f.write("closing dataset: {}\n".format(time.perf_counter()))
         base_dataset.close()
+        # with open("{}_{}.log".format(base_dataset.name, id(base_dataset)), "a+") as f:
+        #     f.write("dataset closed: {}\n".format(time.perf_counter()))
+        return
 
     def _thread_worker_fn(self):
         while True:
@@ -164,12 +203,15 @@ class IteratorDataset:
         self.close()
 
     def close(self):
-        if self._with_prefetching:
+        if not isinstance(self._base_dataset, ivy.Container):
+            self._base_dataset.close()
+        if self._prefetch_running:
             if self._parallel_method == 'process':
                 try:
                     self._input_queue.put(False)
                     if self._worker.is_alive():
-                        self._worker.join(timeout=5.0)
+                        # ToDo: increase this timeout once the blocking issue for json data loader is fixed
+                        self._worker.join(timeout=0.1)
                     self._input_queue.cancel_join_thread()
                     self._input_queue.close()
                     self._output_queue.cancel_join_thread()
@@ -177,23 +219,20 @@ class IteratorDataset:
                 finally:
                     if self._worker.is_alive():
                         self._worker.terminate()
-                    del self._worker
-                    del self._input_queue
-                    del self._output_queue
             else:
                 self._lock_for_spin.acquire()
                 self._keep_spinning = False
                 self._lock_for_spin.release()
                 if self._thread.is_alive():
                     self._thread.join()
-        self._base_dataset.close()
+        self._prefetch_running = False
 
 
 class MapDataset:
 
     def __init__(self, base_dataset, name, size, base_slice_fn=None, trans_fn=None, slice_fn=None,
-                 elementwise_query_fn=True, with_caching=True, cache_size=1, num_processes=1, queue_timeout=None,
-                 is_subprocess=False, ivyh=None):
+                 elementwise_query_fn=True, cache_size=0, cache=None, num_processes=1,
+                 queue_timeout=None, blocking_retreival=True, is_subprocess=False, ivyh=None):
         self._name = name
         self._size = size
         self._base_slice_fn = base_slice_fn
@@ -208,10 +247,19 @@ class MapDataset:
         else:
             self._slice_dataset = slice_fn
         self._elementwise_query_fn = elementwise_query_fn
-        self._with_caching = with_caching
+        self._with_caching = cache_size > 0
         self._cache_size = cache_size
-        self._cache = Cache(cache_size)
+        if cache:
+            self._cache = cache
+        else:
+            manager = multiprocessing.Manager()
+            shared_list = manager.list()
+            shared_dict = manager.dict()
+            lock = multiprocessing.Lock()
+            self._cache = Cache(self._cache_size, shared_list, shared_dict, lock)
+
         self._num_processes = multiprocessing.cpu_count() if num_processes is None else num_processes
+        self._blocking_retreival = blocking_retreival
         self._queue_timeout = queue_timeout
         self._is_subprocess = is_subprocess
         self._ivy = ivy.default(ivyh, ivy)
@@ -224,21 +272,18 @@ class MapDataset:
     # Private #
     # --------#
 
-    def _deep_copy(self, num_processes=None):
+    def _deep_copy(self, num_processes=None, shared_list=None, shared_dict=None):
         # noinspection PyProtectedMember
         return MapDataset(
-            base_dataset=self._base_dataset if isinstance(self._base_dataset, ivy.Container)
+            base_dataset=self._base_dataset.copy() if isinstance(self._base_dataset, ivy.Container)
             else self._base_dataset._deep_copy(), name=self._name, size=self._size,
             base_slice_fn=self._base_slice_fn, trans_fn=self._trans_fn, slice_fn=self._slice_fn,
-            elementwise_query_fn=self._elementwise_query_fn, with_caching=self._with_caching,
-            cache_size=self._cache_size, num_processes=ivy.default(num_processes, self._num_processes),
-            queue_timeout=self._queue_timeout, is_subprocess=True)
+            elementwise_query_fn=self._elementwise_query_fn, cache_size=self._cache_size, cache=self._cache,
+            num_processes=ivy.default(num_processes, self._num_processes), queue_timeout=self._queue_timeout,
+            blocking_retreival=self._blocking_retreival, is_subprocess=True)
 
     def _initialize_all_workers(self):
-        if not isinstance(self._base_dataset, ivy.Container) and self._num_processes == 1:
-            # noinspection PyProtectedMember
-            self._base_dataset._initialize_all_workers()
-        if self._num_processes > 1:
+        if not self._workers_initialized and self._num_processes > 1:
             self._workers = list()
             self._slice_queues = list()
             self._output_queues = list()
@@ -257,6 +302,8 @@ class MapDataset:
 
     @staticmethod
     def _worker_fn(index_queue, output_queue, dataset):
+        # with open("{}_{}.log".format(dataset.name, id(dataset)), "a+") as f:
+        #     f.write("worker started: {}\n".format(time.perf_counter()))
         while True:
             try:
                 slice_obj = index_queue.get(timeout=5.0)
@@ -265,10 +312,22 @@ class MapDataset:
             if slice_obj is None:
                 # ToDo: work out why this command below works, but del dataset hangs, despite only calling
                 #  close(), perhaps processes have trouble explicitly deleting arguments passed in?
+                # with open("{}_{}.log".format(dataset.name, id(dataset)), "a+") as f:
+                #     f.write("closing dataset: {}\n".format(time.perf_counter()))
                 dataset.close()
+                # with open("{}_{}.log".format(dataset.name, id(dataset)), "a+") as f:
+                #     f.write("dataset closed, worker exited: {}\n".format(time.perf_counter()))
                 return
             item = dataset[slice_obj]
             output_queue.put(item.to_dict())
+
+    @staticmethod
+    def _empty_queue(queue_in):
+        while True:
+            try:
+                queue_in.get_nowait()
+            except queue.Empty:
+                break
 
     @staticmethod
     def _is_int(val):
@@ -302,7 +361,8 @@ class MapDataset:
     def _default_base_slice_fn(slice_obj, dataset):
         if isinstance(slice_obj, numbers.Number):
             slice_obj = slice(slice_obj, slice_obj+1, 1)
-        return MapDataset._slice_dataset(slice_obj, dataset)
+        ret = MapDataset._slice_dataset(slice_obj, dataset)
+        return ret
 
     @staticmethod
     def _default_slice_fn(slice_obj, sliced_dataset, dataset_size):
@@ -325,12 +385,11 @@ class MapDataset:
             return self._trans_fn(base_dataset, self._ivy)
         return base_dataset
 
-    def _get_item_from_slice_objs(self, base_slice_obj, slice_obj):
-        if isinstance(base_slice_obj, tuple):
-            item = ivy.Container.list_join((self._get_base_item(base_slice_obj[0]),
-                                            self._get_base_item(base_slice_obj[1])))
+    def _get_item_from_slice_objs(self, base_slice_objs, slice_obj):
+        if len(base_slice_objs) == 1:
+            item = self._get_base_item(base_slice_objs[0])
         else:
-            item = self._get_base_item(base_slice_obj)
+            item = ivy.Container.list_join([self._get_base_item(bso) for bso in base_slice_objs])
         return self._slice_dataset(slice_obj, item, self._size)
 
     def _wrap_slice_obj(self, slice_obj):
@@ -349,35 +408,14 @@ class MapDataset:
 
     def _wrap_base_slice_obj(self, slice_obj):
         if isinstance(slice_obj, numbers.Number):
-            return slice_obj
+            return [slice_obj]
         elif slice_obj.stop < slice_obj.start:
             end_idx_0 = slice_obj.start + math.ceil(self._size - slice_obj.start)
             slice_obj_0 = slice(slice_obj.start, end_idx_0, 1)
             start_idx_1 = end_idx_0 - self._size
             slice_obj_1 = slice(start_idx_1, slice_obj.stop, 1)
-            return slice_obj_0, slice_obj_1
-        return slice_obj
-
-    @staticmethod
-    def _split_slice_obj(slice_obj, cache):
-        if isinstance(slice_obj, numbers.Number):
-            if slice_obj in cache:
-                return [(True, slice_obj)]
-            else:
-                return [(False, slice_obj)]
-        slice_objs = list()
-        start = slice_obj.start
-        for i in np.arange(slice_obj.start, slice_obj.stop, 1.):
-            if i in cache:
-                if i != start:
-                    slice_objs.append((False, slice(start, i, 1)))
-                slice_objs.append((True, slice(i, i+1, 1)))
-                start = i + 1
-        if start < slice_obj.stop:
-            slice_objs.append((False, slice(start, slice_obj.stop, 1)))
-        elif len(slice_objs) == 0:
-            return [(False, slice_obj)]
-        return slice_objs
+            return [slice_obj_0, slice_obj_1]
+        return [slice_obj]
 
     def _add_to_cache(self, so, item):
         if isinstance(so, numbers.Number):
@@ -391,30 +429,48 @@ class MapDataset:
 
     def _get_item_after_cache_n_wrap(self, slice_obj):
         base_slice_obj = self._wrap_base_slice_obj(slice_obj)
-        return self._get_item_from_slice_objs(base_slice_obj, slice_obj)
+        ret = self._get_item_from_slice_objs(base_slice_obj, slice_obj)
+        return ret
 
     def _get_item(self, slice_obj):
+        # ToDo: simplify this method for the case of no caching
         slice_obj = self._wrap_slice_obj(slice_obj)
-        split_slice_objs = self._split_slice_obj(slice_obj, self._cache)
+        slice_objs = self._wrap_base_slice_obj(slice_obj)
         items = list()
-        items_for_cache = list()
-        sos_for_cache = list()
-        for from_cache, so in split_slice_objs:
+        range_to_iterate = [i for s in [np.arange(so, so+1, 1) if isinstance(so, numbers.Number) else
+                            np.arange(so.start, so.stop, 1) for so in slice_objs] for i in s]
+        start = range_to_iterate[0]
+        pre_cache_items_exist = False
+        for i, so in enumerate(range_to_iterate):
+            so = int(so) if self._is_int(so) else so
+            cache_item = None
+            try:
+                cache_item = self._cache[so].map(lambda x, kc: [x])
+            except KeyError:
+                pre_cache_items_exist = True
+            from_cache = ivy.exists(cache_item)
             if from_cache:
-                so_key = so if isinstance(so, numbers.Number) else so.start
-                items.append(self._cache[so_key])
-                continue
-            item = self._get_item_after_cache_n_wrap(so)
-            if self._with_caching:
-                sos_for_cache.append(so)
-                items_for_cache.append(item)
-            items.append(item)
-        if self._cache_size > 0:
-            for so, item in zip(sos_for_cache, items_for_cache):
-                self._add_to_cache(so, item)
+                if pre_cache_items_exist:
+                    slc = slice(start, self._size if so == 0 else so, 1)
+                    item = self._get_item_after_cache_n_wrap(slc)
+                    if self._with_caching:
+                        self._add_to_cache(slc, item)
+                    items.append(item)
+                    pre_cache_items_exist = False
+                    items.append(cache_item)
+                else:
+                    items.append(cache_item)
+                start = (so + 1) % self._size
+            elif i == len(range_to_iterate) - 1 and not from_cache:
+                slc = slice(start, so+1, 1)
+                item = self._get_item_after_cache_n_wrap(slc)
+                if self._with_caching:
+                    self._add_to_cache(slc, item)
+                items.append(item)
         if len(items) == 1:
+            # ToDo: determine whether the map should be applied to both below
             if isinstance(slice_obj, numbers.Number):
-                return items[0]
+                return items[0][0]
             return items[0].map(lambda x, kc: x if isinstance(x, list) else [x])
         items_as_lists = [item.map(lambda x, kc: x if isinstance(x, list) else [x]) for item in items]
         return ivy.Container.list_join(items_as_lists)
@@ -423,26 +479,31 @@ class MapDataset:
     # -------#
 
     def __getitem__(self, slice_obj):
+        if self._num_processes < 2 or isinstance(slice_obj, numbers.Number):
+            ret = self._get_item(slice_obj)
+            return ret
         if not self._workers_initialized:
             self._initialize_all_workers()
-        if self._num_processes < 2:
-            ret = self._get_item(slice_obj)
-            return ret
-        if isinstance(slice_obj, numbers.Number):
-            ret = self._get_item(slice_obj)
-            return ret
         slice_size = int(round(slice_obj.stop - slice_obj.start))
         num_sub_slices = min(slice_size, self._num_processes)
         slice_points = np.linspace(slice_obj.start, slice_obj.stop, num_sub_slices+1)
+        slice_sizes = (slice_points[1:] - slice_points[:-1]).astype(np.int32)
         if MapDataset._is_int(slice_obj.start) and MapDataset._is_int(slice_obj.stop):
             slice_points = np.round(slice_points)
         sub_slices = [slice(slice_points[i], slice_points[i+1], 1.) for i in range(num_sub_slices)]
-        offset = np.random.randint(0, self._num_processes)
+        # ToDo: generalize the line below to non-integer slices
+        offset = slice_obj.start % self._num_processes
+        # ToDo: improve the stability, emptying these queues does not guarentee a process will write to it which
+        #  corresponds to a previous set of slices
+        [self._empty_queue(q) for q in self._output_queues]
         [self._slice_queues[int((i + offset) % self._num_processes)].put(sub_slice)
          for i, sub_slice in enumerate(sub_slices)]
-        items_as_lists = [ivy.Container(self._output_queues[int((i + offset) % self._num_processes)].get(
-            timeout=self._queue_timeout), ivyh=self._ivy) for i in range(num_sub_slices)]
-        return ivy.Container.list_join(items_as_lists)
+        output_queues = [self._output_queues[int((i + offset) % self._num_processes)] for i in range(num_sub_slices)]
+        if self._blocking_retreival:
+            items_as_lists = [ivy.Container(q.get(timeout=self._queue_timeout), ivyh=self._ivy) for q in output_queues]
+            return ivy.Container.list_join(items_as_lists)
+        cont = ivy.Container(queues=output_queues, queue_load_sizes=slice_sizes)
+        return cont
 
     def map(self, name, map_func, num_processes=1, queue_timeout=None, base_slice_fn=None, ivyh=None):
         return MapDataset(base_dataset=self,
@@ -450,7 +511,6 @@ class MapDataset:
                           size=self._size,
                           base_slice_fn=base_slice_fn,
                           trans_fn=map_func,
-                          with_caching=self._with_caching,
                           cache_size=self._cache_size,
                           num_processes=num_processes,
                           queue_timeout=ivy.default(queue_timeout, self._queue_timeout),
@@ -481,7 +541,6 @@ class MapDataset:
                           base_slice_fn=base_slice_fn,
                           trans_fn=batch_cont,
                           elementwise_query_fn=False,
-                          with_caching=self._with_caching,
                           cache_size=int(math.ceil(self._cache_size / batch_size)),
                           num_processes=num_processes,
                           queue_timeout=ivy.default(queue_timeout, self._queue_timeout),
@@ -541,7 +600,6 @@ class MapDataset:
                           trans_fn=unbatch_fn,
                           slice_fn=slice_fn,
                           elementwise_query_fn=False,
-                          with_caching=self._with_caching,
                           cache_size=int(math.ceil(self._cache_size * unrolled_size / self._size))
                                 if cache_size is None else cache_size,
                           num_processes=num_processes,
@@ -560,7 +618,6 @@ class MapDataset:
                               name=name,
                               size=pre_shuffled.size,
                               trans_fn=lambda cont, _: cont.shuffle(),
-                              with_caching=self._with_caching,
                               cache_size=self._cache_size,
                               num_processes=num_processes,
                               queue_timeout=ivy.default(queue_timeout, self._queue_timeout),
@@ -572,6 +629,34 @@ class MapDataset:
                                          cache_size=self._cache_size,
                                          batch_sizes=shuffle_buffer_size)
         return post_shuffled
+
+    def prefetch(self, name, buffer_size, ivyh=None):
+
+        # noinspection PyUnresolvedReferences
+        def base_slice_fn(slc_obj, dataset):
+            if isinstance(slc_obj, numbers.Number):
+                so_start = slc_obj
+                so_stop = slc_obj + 1 + buffer_size
+            else:
+                so_start = slc_obj.start
+                so_stop = slc_obj.stop + buffer_size
+            base_slice_obj = slice(so_start, so_stop, 1)
+            return MapDataset._slice_dataset(base_slice_obj, dataset)
+
+        # ToDo: try to apply this to the new dataset, not the current base dataset
+        self._blocking_retreival = False
+        self._num_processes = buffer_size+1
+        orig_cache_size = self._cache_size
+        self._cache_size = max(self._cache_size, buffer_size+1)
+        self._cache.max_size = self._cache_size
+
+        return MapDataset(base_dataset=self,
+                          name=name,
+                          size=self._size,
+                          base_slice_fn=base_slice_fn,
+                          cache_size=orig_cache_size,
+                          num_processes=1,
+                          ivyh=ivy.default(ivyh, self._ivy))
 
     def to_gpu(self, name, num_processes=1, queue_timeout=None, gpu_idx=0):
 
@@ -585,7 +670,6 @@ class MapDataset:
                           name=name,
                           size=self._size,
                           trans_fn=cont_to_gpu,
-                          with_caching=self._with_caching,
                           cache_size=self._cache_size,
                           num_processes=num_processes,
                           queue_timeout=ivy.default(queue_timeout, self._queue_timeout),
@@ -603,14 +687,14 @@ class MapDataset:
                                ivyh=ivy.default(ivyh, self._ivy))
 
     def close(self):
-        if not isinstance(self._base_dataset, ivy.Container) and self._num_processes == 1:
+        if not isinstance(self._base_dataset, ivy.Container):
             self._base_dataset.close()
         if self._has_workers:
             try:
                 for i, w in enumerate(self._workers):
                     self._slice_queues[i].put(None)
                     if w.is_alive():
-                        w.join(timeout=5.0)
+                        w.join(timeout=1.0)
                 for q in self._slice_queues:
                     q.cancel_join_thread()
                     q.close()
@@ -621,9 +705,6 @@ class MapDataset:
                 for w in self._workers:
                     if w.is_alive():
                         w.terminate()
-                del self._workers
-                del self._slice_queues
-                del self._output_queues
         # This line below is only needed because close() is called explicitly from inside the worker_fn.
         #  If the dataset can be deleted directly from inside worker_fn, then this subsequent delete will not be called.
         self._has_workers = False
